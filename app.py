@@ -1,67 +1,66 @@
+
+# app.py
 import streamlit as st
 import socketio
 from cryptography.fernet import Fernet
 
-# Generate AES key for encryption
+# Socket.IO client setup
+sio = socketio.Client()
 AES_KEY = Fernet.generate_key()
 cipher_suite = Fernet(AES_KEY)
 
-# SocketIO client setup
-sio = socketio.Client()
-
 # Connect to the server
-try:
-    sio.connect("http://localhost:5000")
-except socketio.exceptions.ConnectionError as e:
-    st.error(f"Connection failed: {e}")
+sio.connect("http://localhost:5000")
 
 # Streamlit app state
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "room" not in st.session_state:
     st.session_state["room"] = ""
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 
-# Function to encrypt messages
-def encrypt_message(key, message):
-    return cipher_suite.encrypt(message.encode()).decode()
+def decrypt_message(message):
+    try:
+        return cipher_suite.decrypt(message.encode()).decode()
+    except Exception as e:
+        return "[Error decrypting message]"
 
-# Function to decrypt messages
-def decrypt_message(key, message):
-    return cipher_suite.decrypt(message.encode()).decode()
-
-# Handlers for SocketIO events
-@sio.on("message")
 def handle_message(data):
-    decrypted_message = decrypt_message(AES_KEY, data["message"])
-    st.session_state["messages"].append({"sender": data["sender"], "message": decrypted_message})
-    st.experimental_rerun()
-
-# Streamlit UI
-st.title("Encrypted Chat App")
-
-username = st.text_input("Enter your username:", key="username")
-room_name = st.text_input("Enter room name:", key="room_name")
-
-if st.button("Join Room"):
-    if username and room_name:
-        st.session_state["room"] = room_name
-        sio.emit("join", {"username": username, "room": room_name})
+    sid = data["sid"]
+    encrypted_message = data["message"]
+    decrypted_message = decrypt_message(encrypted_message)
+    if sid == sio.sid:
+        st.session_state["messages"].append({"user": "You", "message": decrypted_message})
     else:
-        st.error("Both username and room name are required!")
+        st.session_state["messages"].append({"user": "Other", "message": decrypted_message})
 
-# Message input and send button
-if st.session_state["room"]:
-    st.write(f"Connected to room: {st.session_state['room']}")
-    message = st.text_input("Enter your message:", key="message_input")
-    if st.button("Send Message"):
-        if message:
-            encrypted_message = encrypt_message(AES_KEY, message)
-            sio.emit("message", {"room": st.session_state["room"], "sender": username, "message": encrypted_message})
-            st.session_state["messages"].append({"sender": username, "message": message})  # Append unencrypted for local display
-        else:
-            st.error("Message cannot be empty!")
+sio.on("message", handle_message)
 
-# Display chat messages
-st.write("Chat Messages:")
-for msg in st.session_state["messages"]:
-    st.write(f"{msg['sender']}: {msg['message']}")
+# Layout
+st.title("Real-Time Chat App")
+
+if "joined" not in st.session_state or not st.session_state["joined"]:
+    st.session_state["joined"] = False
+    with st.form("join_form"):
+        st.session_state["username"] = st.text_input("Enter your username")
+        st.session_state["room"] = st.text_input("Enter room name")
+        if st.form_submit_button("Join"):
+            sio.emit("join", {"username": st.session_state["username"], "room": st.session_state["room"]})
+            st.session_state["joined"] = True
+else:
+    # Chat window
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state["messages"]:
+            if msg["user"] == "You":
+                st.markdown(f"<div style='text-align: right;'><b>{msg['user']}:</b> {msg['message']}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div style='text-align: left;'><b>{msg['user']}:</b> {msg['message']}</div>", unsafe_allow_html=True)
+
+    # Message input
+    with st.form("send_form"):
+        user_message = st.text_input("Type your message")
+        if st.form_submit_button("Send"):
+            if user_message.strip():
+                sio.emit("send_message", {"room": st.session_state["room"], "message": user_message})

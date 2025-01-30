@@ -1,45 +1,47 @@
-from flask import Flask, request
-from flask_socketio import SocketIO, join_room, leave_room, emit
+# server.py
+import eventlet
+import socketio
+from cryptography.fernet import Fernet
 
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "secret!"
-socketio = SocketIO(app, cors_allowed_origins="*")  # Enable cross-origin requests for local testing
+# Set up the server
+sio = socketio.Server(cors_allowed_origins="*", async_mode="eventlet")
+app = socketio.WSGIApp(sio)
 
-# Event when a client connects
-@socketio.on("connect")
-def handle_connect():
-    print(f"Client connected: {request.sid}")
-    emit("message", {"sender": "Server", "message": "Welcome to the chat server!"})
+# Generate an encryption key (for production, securely store this key)
+AES_KEY = Fernet.generate_key()
+cipher_suite = Fernet(AES_KEY)
 
-# Event to handle joining a room
-@socketio.on("join")
-def handle_join(data):
+rooms = {}
+
+@sio.event
+def connect(sid, environ):
+    print(f"Client connected: {sid}")
+
+@sio.event
+def disconnect(sid):
+    print(f"Client disconnected: {sid}")
+    for room, users in rooms.items():
+        if sid in users:
+            users.remove(sid)
+            break
+
+@sio.event
+def join(sid, data):
     username = data["username"]
     room = data["room"]
-    join_room(room)
-    print(f"{username} joined room {room}")
-    emit("message", {"sender": "Server", "message": f"{username} has joined the room."}, room=room)
+    if room not in rooms:
+        rooms[room] = []
+    rooms[room].append(sid)
+    sio.enter_room(sid, room)
+    sio.emit("user_joined", {"username": username}, room=room)
+    print(f"{username} joined room: {room}")
 
-# Event to handle leaving a room
-@socketio.on("leave")
-def handle_leave(data):
-    username = data["username"]
+@sio.event
+def send_message(sid, data):
     room = data["room"]
-    leave_room(room)
-    print(f"{username} left room {room}")
-    emit("message", {"sender": "Server", "message": f"{username} has left the room."}, room=room)
-
-# Event to handle chat messages
-@socketio.on("message")
-def handle_message(data):
-    room = data["room"]
-    print(f"Message from {data['sender']} in room {room}: {data['message']}")
-    emit("message", data, room=room)
-
-# Event when a client disconnects
-@socketio.on("disconnect")
-def handle_disconnect():
-    print(f"Client disconnected: {request.sid}")
+    message = data["message"]
+    encrypted_message = cipher_suite.encrypt(message.encode()).decode()
+    sio.emit("message", {"sid": sid, "message": encrypted_message}, room=room)
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    eventlet.wsgi.server(eventlet.listen(("0.0.0.0", 5000)), app)
