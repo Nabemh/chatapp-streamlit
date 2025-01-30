@@ -1,47 +1,48 @@
-# server.py
-import eventlet
-import socketio
+from flask import Flask, request
+from flask_socketio import SocketIO, join_room, leave_room, emit
 from cryptography.fernet import Fernet
 
-# Set up the server
-sio = socketio.Server(cors_allowed_origins="*", async_mode="eventlet")
-app = socketio.WSGIApp(sio)
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your_secret_key'
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Generate an encryption key (for production, securely store this key)
-AES_KEY = Fernet.generate_key()
+# The key should be the same as the client key
+AES_KEY = b'YOUR_AES_KEY_HERE'  # Replace this with the same key
 cipher_suite = Fernet(AES_KEY)
 
-rooms = {}
+@app.route('/')
+def index():
+    return "Socket.IO server is running."
 
-@sio.event
-def connect(sid, environ):
-    print(f"Client connected: {sid}")
+@socketio.on('join')
+def on_join(data):
+    """Handle a user joining the room."""
+    username = data['username']
+    room = data['room']
+    join_room(room)
+    emit('message', {'username': 'Server', 'message': f'{username} has joined the room.'}, to=room)
 
-@sio.event
-def disconnect(sid):
-    print(f"Client disconnected: {sid}")
-    for room, users in rooms.items():
-        if sid in users:
-            users.remove(sid)
-            break
+@socketio.on('message')
+def handle_message(data):
+    """Handle a user sending a message."""
+    try:
+        room = data['room']
+        username = data['username']
+        message = data['message']
+        
+        # Encrypt the message before broadcasting
+        encrypted_message = cipher_suite.encrypt(message.encode()).decode()
+        emit('message', {'username': username, 'message': encrypted_message}, to=room)
+    except Exception as e:
+        emit('error', {'error': str(e)})
 
-@sio.event
-def join(sid, data):
-    username = data["username"]
-    room = data["room"]
-    if room not in rooms:
-        rooms[room] = []
-    rooms[room].append(sid)
-    sio.enter_room(sid, room)
-    sio.emit("user_joined", {"username": username}, room=room)
-    print(f"{username} joined room: {room}")
+@socketio.on('leave')
+def on_leave(data):
+    """Handle a user leaving the room."""
+    username = data['username']
+    room = data['room']
+    leave_room(room)
+    emit('message', {'username': 'Server', 'message': f'{username} has left the room.'}, to=room)
 
-@sio.event
-def send_message(sid, data):
-    room = data["room"]
-    message = data["message"]
-    encrypted_message = cipher_suite.encrypt(message.encode()).decode()
-    sio.emit("message", {"sid": sid, "message": encrypted_message}, room=room)
-
-if __name__ == "__main__":
-    eventlet.wsgi.server(eventlet.listen(("0.0.0.0", 5000)), app)
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000)

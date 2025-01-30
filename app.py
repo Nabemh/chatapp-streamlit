@@ -1,66 +1,78 @@
-
-# app.py
 import streamlit as st
 import socketio
 from cryptography.fernet import Fernet
 
-# Socket.IO client setup
-sio = socketio.Client()
-AES_KEY = Fernet.generate_key()
+# The key should be the same on both server and client
+AES_KEY = b'YOUR_AES_KEY_HERE'  # Replace this with a shared key
 cipher_suite = Fernet(AES_KEY)
 
-# Connect to the server
-sio.connect("http://localhost:5000")
+sio = socketio.Client()
 
-# Streamlit app state
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+st.title("Streamlit Chat App")
+
+# Initialize session state for room and messages
 if "room" not in st.session_state:
     st.session_state["room"] = ""
-if "username" not in st.session_state:
-    st.session_state["username"] = ""
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
 
-def decrypt_message(message):
+def connect_to_server():
     try:
-        return cipher_suite.decrypt(message.encode()).decode()
+        sio.connect("http://localhost:5000")  # Connect to the server
+        st.success("Connected to the server")
     except Exception as e:
-        return "[Error decrypting message]"
+        st.error(f"Connection failed: {e}")
 
+@sio.on('message')
 def handle_message(data):
-    sid = data["sid"]
-    encrypted_message = data["message"]
-    decrypted_message = decrypt_message(encrypted_message)
-    if sid == sio.sid:
-        st.session_state["messages"].append({"user": "You", "message": decrypted_message})
+    """Handle incoming messages from the server."""
+    try:
+        decrypted_message = cipher_suite.decrypt(data["message"].encode()).decode()
+        # Append the message with username to session state for display
+        st.session_state.messages.append(f"{data['username']}: {decrypted_message}")
+    except Exception as e:
+        st.session_state.messages.append(f"Error decrypting message: {e}")
+
+@sio.on('error')
+def handle_error(data):
+    """Handle any errors."""
+    st.error(f"Server error: {data['error']}")
+
+def send_message():
+    """Send a message to the server."""
+    if st.session_state["room"]:
+        message = st.text_input("Enter your message")
+        if st.button("Send"):
+            # Encrypt the message before sending
+            encrypted_message = cipher_suite.encrypt(message.encode()).decode()
+            sio.emit("message", {"username": username, "room": st.session_state["room"], "message": encrypted_message})
+
+# Sidebar for user input (username and room)
+with st.sidebar:
+    username = st.text_input("Enter your username", value="User")
+    room = st.text_input("Enter room name", value="")
+    
+    # Join room
+    if st.button("Join Room"):
+        if room:
+            st.session_state["room"] = room
+            connect_to_server()
+            sio.emit("join", {"username": username, "room": room})
+    
+    # Leave room
+    if st.button("Leave Room"):
+        if st.session_state["room"]:
+            sio.emit("leave", {"username": username, "room": st.session_state["room"]})
+            st.session_state["room"] = ""
+
+# Display messages from session state
+if st.session_state["room"]:
+    send_message()
+
+# Display messages on the chat UI
+st.subheader("Chat Messages")
+for msg in st.session_state["messages"]:
+    if msg.startswith(f"{username}:"):
+        st.markdown(f"<p style='text-align:right;color:blue;'>{msg}</p>", unsafe_allow_html=True)
     else:
-        st.session_state["messages"].append({"user": "Other", "message": decrypted_message})
-
-sio.on("message", handle_message)
-
-# Layout
-st.title("Real-Time Chat App")
-
-if "joined" not in st.session_state or not st.session_state["joined"]:
-    st.session_state["joined"] = False
-    with st.form("join_form"):
-        st.session_state["username"] = st.text_input("Enter your username")
-        st.session_state["room"] = st.text_input("Enter room name")
-        if st.form_submit_button("Join"):
-            sio.emit("join", {"username": st.session_state["username"], "room": st.session_state["room"]})
-            st.session_state["joined"] = True
-else:
-    # Chat window
-    chat_container = st.container()
-    with chat_container:
-        for msg in st.session_state["messages"]:
-            if msg["user"] == "You":
-                st.markdown(f"<div style='text-align: right;'><b>{msg['user']}:</b> {msg['message']}</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='text-align: left;'><b>{msg['user']}:</b> {msg['message']}</div>", unsafe_allow_html=True)
-
-    # Message input
-    with st.form("send_form"):
-        user_message = st.text_input("Type your message")
-        if st.form_submit_button("Send"):
-            if user_message.strip():
-                sio.emit("send_message", {"room": st.session_state["room"], "message": user_message})
+        st.markdown(f"<p>{msg}</p>", unsafe_allow_html=True)
