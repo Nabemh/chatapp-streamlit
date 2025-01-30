@@ -3,7 +3,8 @@ import socketio
 from cryptography.fernet import Fernet
 
 # The key should be the same on both server and client
-AES_KEY = b'YOUR_AES_KEY_HERE'  # Replace this with a shared key
+AES_KEY = AES_KEY = b'BukEPYFYBmSm7cHN9zCh1gjs-3qw8hz2a7WEGR8bobg='
+ # Replace this with a shared key
 cipher_suite = Fernet(AES_KEY)
 
 sio = socketio.Client()

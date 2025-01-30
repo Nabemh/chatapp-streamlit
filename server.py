@@ -3,11 +3,12 @@ from flask_socketio import SocketIO, join_room, leave_room, emit
 from cryptography.fernet import Fernet
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SECRET_KEY'] = b'\x86q\x1e\xcaj\x98\xaaz\xc7\x82\xc0\xad\xc8\xb3z\x97\xa9\xdb\x1c\xe8\xf5]\x02\xfc'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # The key should be the same as the client key
-AES_KEY = b'YOUR_AES_KEY_HERE'  # Replace this with the same key
+AES_KEY = AES_KEY = b'BukEPYFYBmSm7cHN9zCh1gjs-3qw8hz2a7WEGR8bobg='
+  # Replace this with the same key
 cipher_suite = Fernet(AES_KEY)
 
 @app.route('/')
